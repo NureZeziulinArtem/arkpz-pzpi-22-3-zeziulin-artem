@@ -71,7 +71,7 @@ namespace GardeningAdviceSystem.Controllers
                 Name = model.Name,
                 Surname = model.Surname,
                 Email = model.Email,
-                UserName = new Guid().ToString()
+                UserName = (Guid.NewGuid()).ToString()
             };
 
             try
