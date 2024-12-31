@@ -1,1 +1,325 @@
+﻿Харківський університет радіоелектроніки
+Факультет комп'ютерних наук
+Кафедра програмної інженерії
+
+
+
+
+
+
+
+ЗВІТ
+до лабораторної роботи номер 3 з дисципліни
+"Аналіз та рефакторинг коду"
+на тему: "Розробка бізнес-логіки та функцій адміністрування серверної частини програмної системи"
+
+
+
+
+
+                                   Виконав ст. гр ПЗПІ-22-3
+                                   Зезюлін Артем Віталійович
+                                   
+                                   Перевірив
+                                             ст. викладач катедри ПІ 
+                                               Сокорчук Ігор Петрович
+
+
+
+Харків 2024
+1 МЕТА
+
+	Розробити бізнес-логику та функції адміністрування серверної частини  програмної системи для формування рекомендацій по вирощуванню рослин.
+
+2 ХІД РОБОТИ
+
+	Під час виконання лабораторної роботи для програмної системи для формування рекомендацій по вирощуванню рослин було розроблено бізнес логіку. Для виконання управління сесіями було вирішено використовувати вбудовані компоненти Miscrosoft Identity, які включали управління акаунтами, сесіями та користувацькими ролями в системі. Для формування передбачень щодо майбутніх значень показників ph та вологості ґрунту було використано метод лінійної регресії.
+     Для програмної системи також було розроблено функції адміністрування серверної частини, які включають створення резервної копії бази даних системи та відновлення бази даних за створеною раніше резервною копією.
+     Для програмної системи також було побудовано UML діаграму діяльності системи для процесу додавання девайсу в систему та запис рослини, яка вирощується в ґрунті, слідкування за яким виконує поточний девайс (див. Додаток А), а також UML діаграму взаємодії для процесу отримання передбачення властивостей ґрунту (див. Додаток Б).
+     .
+
+
+
+ВИСНОВКИ
+
+     В ході виконання лабораторної роботи було реалізовано:
+     - Бізнес логіку;
+     - Функції адміністрування серверної частини;
+     - UML діаграму діяльності;
+     - UML діаграму взаємодії. 
+
+
+ДОДАТОК А
+UML ДІАГРАМА ДІЯЛЬНОСТІ
+
+
+Рисунок А.1 - UML діаграма діяльності системи для процесу додавання девайсу в систему та запис рослини, яка вирощується в ґрунті, слідкування за яким виконує поточний девайс
+
+
+ДОДАТОК Б 
+UML ДІАГРАМА ПОСЛІДОВНОСТІ (ВЗАЄМОДІЇ)
+     
+
+Рисунок Б.1 - UML діаграма взаємодії для процесу отримання передбачення властивостей ґрунту
+
+
+
+ДОДАТОК В
+ПРИКЛАДИ ПРОГРАМНОГО КОДУ
+     
+1 private List<double> LinearRegressionPrediction(List<double> values, int daysToPredict)
+2 {
+3     int n = values.Count;
+4     double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+5 
+6     for (int i = 0; i < n; i++)
+7     {
+8         sumX += i;
+9         sumY += values[i];
+10         sumXY += i * values[i];
+11         sumXX += i * i;
+12     }
+13 
+14     double slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+15     double intercept = (sumY - slope * sumX) / n;
+16 
+17     var predictions = new List<double>();
+18     for (int i = 0; i < daysToPredict; i++)
+19     {
+20         double futureX = n + i; // Future days
+21         predictions.Add(slope * futureX + intercept);
+22     }
+23 
+24     return predictions;
+25 }
+
+
+1 [HttpGet("advice-for-plant")]
+2 [Authorize]
+3 // takes the device id and the plant id
+4 // retrieves the device's latest log
+5 // to determine the difference between the plant's
+6 // requirements and the current state of soil
+7 public async Task<IActionResult> AdviceForPlant(int deviceId, int plantId)
+8 {
+9     if (deviceId == 0)
+10     {
+11         _logger.LogError("Failed to form an advice - deviceId not received");
+12         return BadRequest();
+13     }
+14 
+15     if (plantId == 0)
+16     {
+17         _logger.LogError("Failed to form an advice - plantId not received");
+18         return BadRequest();
+19     }
+20 
+21     try
+22     {
+23         var device = await _deviceRepository.GetByIdAsync(deviceId);
+24         if (device == null)
+25         {
+26             _logger.LogInformation("Failed to form an advice - device not found");
+27             return NotFound();
+28         }
+29 
+30         var user = await _userManager.GetUserAsync(User);
+31         if (user == null || device.AccountId != user.Id)
+32         {
+33             _logger.LogInformation("Failed to form an advice - wrong user");
+34             return Unauthorized();
+35         }
+36 
+37         var lastLog = device.Logs.MaxBy(d => d.Recorded);
+38         if (lastLog == null)
+39         {
+40             _logger.LogInformation("Failed to form an advice - no logs found");
+41             return NotFound();
+42         }
+43 
+44         var plant = await _plantRepository.GetByIdAsync(plantId);
+45 
+46         if (plant == null)
+47         {
+48             _logger.LogInformation("Failed to retrieve plants - plants not found");
+49             return NotFound();
+50         }
+51 
+52         var model = new PlantAdviceModel()
+53         {
+54             Moisture = lastLog.Moisture,
+55             Ph = lastLog.Ph,
+56             MinMoisture = plant.MinMoisture,
+57             MaxMoisture = plant.MaxMoisture,
+58             MinPh = plant.MinPh,
+59             MaxPh = plant.MaxPh
+60         };
+61 
+62         var averagePh = (model.MinPh + model.MaxPh) / 2;
+63         model.IdealPhChange = averagePh - model.Ph;
+64 
+65         var averageMoisture = (model.MinMoisture + model.MaxMoisture) / 2;
+66         model.IdealMoistureChange = averageMoisture - model.Moisture;
+67 
+68         if (model.Moisture > model.MaxMoisture)
+69         {
+70             model.MinMoistureChange = model.MaxMoisture - model.Moisture;
+71         }
+72         else if (model.Moisture < model.MinMoisture)
+73         {
+74             model.MinMoistureChange = model.Moisture - model.MinMoisture;
+75         }
+76 
+77         if (model.Ph > model.MaxPh)
+78         {
+79             model.MinPhChange = model.MaxPh - model.Ph;
+80         }
+81         else if (model.Ph < model.MinPh)
+82         {
+83             model.MinPhChange = model.Ph - model.MinPh;
+84         }
+85 
+86         return Ok(model);
+87     }
+88     catch (Exception ex)
+89     {
+90         _logger.LogError(ex.Message);
+91         return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+92     }
+93 }
+
+
+1 [Route("api/[controller]")]
+2 [ApiController]
+3 [Authorize(Roles = UserRoles.DbAdmin)]
+4 public class DatabaseAdminController : ControllerBase
+5 {
+6     private readonly DatabaseAdminRepository _dbAdminRepository;
+7     private readonly ILogger<DatabaseAdminController> _logger;
+8 
+9     public DatabaseAdminController(UnitOfWork unitOfWork, ILogger<DatabaseAdminController> logger)
+10     {
+11         _dbAdminRepository = unitOfWork.DatabaseAdminRepository;
+12         _logger = logger;
+13     }
+14 
+15     [HttpPost("backup-db")]
+16     public async Task<IActionResult> BackupDb(string backupPath)
+17     {
+18         try
+19         {
+20             await _dbAdminRepository.BackupDatabaseAsync(backupPath);
+21 
+22             return Ok();
+23         }
+24         catch (Exception ex)
+25         {
+26             return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+27         }
+28     }
+29 
+30     [HttpPost("restore-db")]
+31     public async Task<IActionResult> RestoreDb(string backupPath)
+32     {
+33         try
+34         {
+35             await _dbAdminRepository.RestoreDatabaseAsync(backupPath);
+36 
+37             return Ok();
+38         }
+39         catch (Exception ex)
+40         {
+41             return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+42         }
+43     }
+44 }
+
+
+1 public class DatabaseAdminRepository
+2 {
+3     private readonly ApplicationContext _context;
+4     private readonly ILogger<DatabaseAdminRepository> _logger;
+5 
+6     public DatabaseAdminRepository(ApplicationContext context, ILogger<DatabaseAdminRepository> logger)
+7     {
+8         _context = context;
+9         _logger = logger;
+10     }
+11 
+12     public async Task BackupDatabaseAsync(string backupPath)
+13     {
+14         try
+15         {
+16             var sql = $@"
+17             USE master;
+18             BACKUP DATABASE [GardeningAdviceSystem]
+19             TO DISK = @backupPath
+20             WITH FORMAT, INIT;";
+21 
+22             await _context.Database.ExecuteSqlRawAsync(sql, 
+23                 new[] { new SqlParameter("@backupPath", backupPath) });
+24         }
+25         catch (Exception ex)
+26         {
+27             throw new Exception("Failed to backup the database.", ex);
+28         }
+29     }
+30 
+31     public async Task RestoreDatabaseAsync(string backupPath)
+32     {
+33         try
+34         {
+35             // Check if the database exists
+36             var checkDatabaseExistsSql = $@"
+37             USE master;
+38             SELECT COUNT(*) 
+39             FROM sys.databases 
+40             WHERE name = 'GardeningAdviceSystem'";
+41 
+42             var databaseExists = await _context.Database.ExecuteSqlRawAsync(checkDatabaseExistsSql) > 0;
+43 
+44             if (databaseExists)
+45             {
+46                 // Disable connections to the database
+47                 var disableConnectionsSql = $@"
+48                 USE master;
+49                 ALTER DATABASE [GardeningAdviceSystem]
+50                 SET SINGLE_USER WITH ROLLBACK IMMEDIATE;";
+51                 await _context.Database.ExecuteSqlRawAsync(disableConnectionsSql);
+52             }
+53 
+54             // Restore the database
+55             var restoreSql = $@"
+56             USE master;
+57             RESTORE DATABASE [GardeningAdviceSystem]
+58             FROM DISK = @backupPath
+59             WITH REPLACE;";
+60             await _context.Database.ExecuteSqlRawAsync(restoreSql, 
+61                 new[] { new SqlParameter("@backupPath", backupPath) });
+62 
+63             if (databaseExists)
+64             {
+65                 // Enable connections to the database
+66                 var enableConnectionsSql = $@"
+67                 USE master;
+68                 ALTER DATABASE [GardeningAdviceSystem]
+69                 SET MULTI_USER;";
+70                 await _context.Database.ExecuteSqlRawAsync(enableConnectionsSql);
+71             }
+72         }
+73         catch (Exception ex)
+74         {
+75             throw new Exception("Failed to restore the database.", ex);
+76         }
+77     }
+78 }
+
+
+ДОДАТОК Г
+ВІДЕО НА ЮТУБ
+
+        https://youtu.be/PBo9FclVUqc
+
+2
+
 
